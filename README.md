@@ -1,7 +1,12 @@
 # Proyecto 6 – Factorización LU paralela con MPI
 
 Métodos Numéricos II – Computación Científica · FACET-UNT · 2026
-Autores: (completar)
+
+Integrantes del grupo:
+
+- Valle, Guillermo Augusto
+- Sueldo, Mariano Leonel
+- Velazquez, Lourdes Ailen
 
 En este proyecto resolvimos sistemas de ecuaciones A x = b con factorización LU con pivoteo parcial. Primero hicimos una versión en serie y después una en paralelo con MPI. Medimos tiempos, speedup y precisión en una notebook y en el clúster de Córdoba, con matrices de hasta 30000 × 30000 y hasta 96 procesos.
 
@@ -25,7 +30,7 @@ Algunas decisiones que tomamos:
 ```
 codigo/        generar.c, lu_serial.c, lu_mpi.c
 scripts/       medir.sh, medir_cluster.sh, medir_grande.sh
-resultados/    los CSV con las mediciones, graficos.py y la carpeta figuras/
+resultados/    los CSV con las mediciones, graficos.py y la carpeta plots/
 README.md
 ```
 
@@ -35,7 +40,7 @@ README.md
 - `scripts/medir*.sh`: corren todas las mediciones (PC, clúster y clúster con N grandes). Para usarlos hay que copiarlos a la carpeta donde están los programas compilados.
 - `resultados/resultados_pc.csv`, `resultados_cluster.csv`, `resultados_cluster_grande.csv`: todas las mediciones, una línea por corrida.
 - `resultados/experimento_ubicacion.csv`: el experimento de la caché (ver más abajo).
-- `resultados/graficos.py`: arma los gráficos en `resultados/figuras/`.
+- `resultados/graficos.py`: arma los gráficos en `resultados/plots/`.
 
 ## Cómo compilar y correr
 
@@ -49,7 +54,7 @@ mpicc -O3 lu_mpi.c    -o lu_mpi    -lm
 ./lu_serial sistema_4000.bin
 mpirun -n 16 --bind-to core ./lu_mpi sistema_4000.bin c     # c = cíclico, b = bloques
 
-python3 ../resultados/graficos.py                           # gráficos en resultados/figuras/
+python3 ../resultados/graficos.py                           # gráficos en resultados/plots/
 ```
 
 Cada corrida imprime una línea con: `N, p, reparto, t_total, t_lectura, t_factorizar, t_comunicacion, t_calculo, t_juntar, t_sustitucion, residuo_abs, residuo_rel, error_x`.
@@ -94,17 +99,20 @@ Esto también explica que con N = 2000 y 4 u 8 procesos el speedup haya dado **m
 
 **En la notebook, lo mejor fue usar 6 procesos.** Son los 6 núcleos rápidos: con 8 o 10 entran los núcleos lentos, y como todos esperan al más lento en cada paso, empeora. El speedup con 6 fue 6,3 para N = 1000, pero solo 1,4 para N = 4000, donde la matriz ya no entra en la caché y la memoria de la notebook se vuelve el límite.
 
-**La precisión es buena y no cambia al paralelizar.** El residuo relativo ‖Ax − b‖/‖b‖ quedó entre 10⁻¹⁴ y 3·10⁻¹², o sea entre 12 y 14 dígitos correctos. Está por debajo de lo que se espera solo por el redondeo de la computadora (del orden de N·ε). Además da exactamente igual con cualquier cantidad de procesos, con los dos repartos y en las dos máquinas.
+**La precisión es buena y no cambia al paralelizar.** El residuo relativo ‖Ax − b‖/‖b‖ quedó entre 10⁻¹⁴ y 3·10⁻¹², del mismo orden que el de LAPACK resolviendo los mismos sistemas (ver la comparación con LAPACK más abajo). Como la solución exacta es conocida (todos unos), también medimos el error relativo de x: está entre 1,5·10⁻¹³ y 1,6·10⁻¹⁰, o sea del orden de 10 a 13 dígitos de precisión relativa. Además todo da exactamente igual con cualquier cantidad de procesos, con los dos repartos y en las dos máquinas.
 
-Los gráficos están en `resultados/figuras/`:
+Los gráficos están en `resultados/plots/`:
 
 - `01_G1`: tiempo de factorización vs N (serial y paralelo).
 - `02_G2`: tiempo de cálculo vs tiempo de comunicación, para p = 16, 32 y 96.
 - `03_G3b`: speedup vs cantidad de procesos, en el clúster.
 - `04_N4`: experimento de la caché (4 procesos por L3 contra 1 por L3).
-- `05_E5` y `06_E5`: tiempo total para cada cantidad de procesos, en el clúster y en la notebook.
-- `07_E4`: diferencia entre reparto cíclico y por bloques.
-- `08_G6`: precisión (residuo) vs N.
+- `05_E5`: tiempo total para cada cantidad de procesos, en el clúster.
+- `06_E2`: eficiencia (speedup / p) vs cantidad de procesos, en el clúster.
+- `07_G6`: precisión (residuo) vs N.
+- `08_E4`: diferencia entre reparto cíclico y por bloques.
+- `09_E5`: tiempo total para cada cantidad de procesos, en la notebook.
+- `10_G3a`: speedup vs cantidad de procesos, en la notebook.
 
 ## Qué existe ya que hace esto
 
@@ -115,6 +123,28 @@ Buscando si había programas que ya resolvieran este problema, encontramos estos
 - **HPL (High-Performance Linpack)**: resuelve un sistema denso aleatorio con LU y pivoteo parcial usando MPI. Es casi lo mismo que hicimos nosotros, y es el programa con el que se arma el ranking TOP500 de supercomputadoras.
 
 Nosotros programamos el algoritmo desde cero, porque esa era la consigna y queríamos entender qué pasa en cada paso. Estas bibliotecas sirven como referencia de lo que se puede mejorar.
+
+Para tener una idea concreta, resolvimos los mismos sistemas en la notebook con LAPACK (desde Python, `scipy.linalg.lu_factor`, con OpenBLAS) usando `codigo/comparar_lapack.py`. Una sola corrida de cada caso:
+
+| N | nuestro serial | nuestro MPI, p = 6 | LAPACK, 1 hilo | LAPACK, 6 hilos |
+|---|---|---|---|---|
+| 1000 | 0,105 s | 0,017 s | 0,019 s | 0,007 s |
+| 2000 | 1,04 s | 0,332 s | 0,13 s | 0,039 s |
+| 4000 | 12,0 s | 8,84 s | 0,89 s | 0,23 s |
+
+La precisión da del mismo orden. Residuo relativo ‖Ax − b‖/‖b‖, con LAPACK en 1 hilo (N = 8000 y 16000 se corrieron en el clúster; el residuo es el mismo en las dos máquinas):
+
+| N | nuestro | LAPACK |
+|---|---|---|
+| 1000 | 3,1·10⁻¹⁴ | 1,7·10⁻¹⁴ |
+| 2000 | 7,3·10⁻¹⁴ | 4,0·10⁻¹⁴ |
+| 4000 | 1,8·10⁻¹³ | 9,5·10⁻¹⁴ |
+| 8000 | 4,7·10⁻¹³ | 2,7·10⁻¹³ |
+| 16000 | 1,4·10⁻¹² | 6,8·10⁻¹³ |
+
+LAPACK da alrededor de la mitad, probablemente porque hace las cuentas en otro orden (por bloques). Con varios hilos el residuo de LAPACK cambia en las últimas cifras (el orden de las sumas depende de cuántos hilos haya). El nuestro, en cambio, da exactamente igual con cualquier cantidad de procesos.
+
+En tiempo, LAPACK con un solo núcleo ya es 13 veces más rápido que nuestro serial con N = 4000: trabaja por bloques que entran en la caché y usa una BLAS optimizada para el procesador (con la BLAS básica, sin optimizar, tardaba 4,7 s). Y su speedup con 6 hilos crece con N (2,7 / 3,3 / 3,8), al revés que el nuestro (6,3 / 3,1 / 1,4), porque no queda frenado por la memoria.
 
 ## Mejoras que nos quedaron pendientes
 

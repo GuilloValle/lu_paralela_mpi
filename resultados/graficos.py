@@ -9,8 +9,8 @@
 #
 # Cada caso (N, p, reparto) se corrio varias veces: siempre usamos la MEDIANA.
 #
-# Que hace: genera los 8 graficos del informe y los guarda como .png en la
-# carpeta "figuras" (la crea si no existe). Los nombres empiezan con un numero
+# Que hace: genera los 10 graficos del informe y los guarda como .png en la
+# carpeta "plots" (la crea si no existe). Los nombres empiezan con un numero
 # (01_, 02_, ...) para que queden ordenados.
 # Si MOSTRAR_VENTANAS = True, ademas abre una ventana por cada grafico al final.
 #
@@ -23,13 +23,13 @@ import os
 import numpy as np
 import matplotlib.pyplot as plt
 
-MOSTRAR_VENTANAS = False        # True = abre las 8 ventanas al final; False = solo guarda los .png
+MOSTRAR_VENTANAS = False        # True = abre las 10 ventanas al final; False = solo guarda los .png
 
 # Trabajar siempre en la carpeta donde esta este archivo (ahi estan los CSV),
 # asi funciona igual si se ejecuta desde otra carpeta
 os.chdir(os.path.dirname(os.path.abspath(__file__)))
 
-CARPETA = "figuras"             # carpeta donde se guardan las imagenes
+CARPETA = "plots"               # carpeta donde se guardan las imagenes
 os.makedirs(CARPETA, exist_ok=True)   # crea la carpeta (si ya existe, no hace nada)
 
 
@@ -295,8 +295,9 @@ guardar("03_G3b_speedup_vs_p_cluster.png")
 # Mismo N, mismos 16 procesos, mismo codigo. Solo cambia DONDE se ubican los procesos:
 #   4_por_L3 -> mpirun -n 16 --map-by ppr:4:l3cache --bind-to core ...  (4 comparten cada L3 de 16 MB: 4 MB c/u)
 #   1_por_L3 -> mpirun -n 16 --map-by ppr:1:l3cache --bind-to core ...  (cada uno tiene la L3 entera: 16 MB)
-# N=4000: cada proceso tiene 8 MB  -> con 1 por L3 ENTRA en la cache
-# N=8000: cada proceso tiene 32 MB -> NO entra en ningun caso (sirve de control)
+# N=4000: cada proceso tiene 8 MB  -> con 1 por L3 ENTRA en la cache desde el principio
+# N=8000: cada proceso tiene 32 MB -> al principio NO entra en ningun caso; pero la parte
+#         que se sigue usando se achica en cada paso, y al final si entra.
 # =====================================================================
 if os.path.exists("experimento_ubicacion.csv"):
     experimento = []
@@ -312,7 +313,11 @@ if os.path.exists("experimento_ubicacion.csv"):
                 valores.append(float(fila["t_factorizar"]))
         return np.median(valores)
 
-    plt.figure(figsize=(11, 5))
+    # Numeros del eje vertical con coma decimal (0,5 en vez de 0.5), igual que los textos
+    def con_coma(valor, posicion):
+        return f"{valor:g}".replace(".", ",")
+
+    plt.figure(figsize=(11, 5.3))
     numero_panel = 1
     for N in [4000, 8000]:
         t_4_por_L3 = mediana_ubicacion("4_por_L3", N)
@@ -327,12 +332,13 @@ if os.path.exists("experimento_ubicacion.csv"):
         for i in range(2):
             plt.text(i, tiempos[i], texto_tiempo(tiempos[i]), ha="center", va="bottom", fontsize=10)
         plt.ylim(0, t_4_por_L3 * 1.25)
-        plt.ylabel("Tiempo de factorizacion")
+        plt.ylabel("Tiempo de factorizacion [s]")
+        plt.gca().yaxis.set_major_formatter(plt.FuncFormatter(con_coma))
 
         if mb_por_proceso <= 16:
-            entra = "con 1 por L3 SI entra en la cache"
+            entra = "con 1 por L3 entra en la cache desde el principio"
         else:
-            entra = "NO entra en la cache en ningun caso"
+            entra = "al principio no entra; al final, con menos filas activas, si"
         plt.title(f"N = {N}: {mb_por_proceso:.0f} MB por proceso\n({entra})")
         # Cuantas veces mas rapido, escrito en el medio del panel
         plt.text(0.5, t_4_por_L3 * 1.1, f"{t_4_por_L3 / t_1_por_L3:.1f} veces mas rapido".replace(".", ","),
@@ -410,16 +416,67 @@ plt.suptitle("E5: tiempo de ejecucion en el cluster (en naranja, la cantidad de 
 plt.tight_layout()
 guardar("05_E5_tiempo_por_p_cluster.png")
 
-# --- PC: 4 paneles (2 filas x 2 columnas) ---
-plt.figure(figsize=(12, 8))
-numero_panel = 1
-for N in N_PC:
-    plt.subplot(2, 2, numero_panel)
-    panel_barras("PC", N, P_PC)
-    numero_panel = numero_panel + 1
-plt.suptitle("E5: tiempo de ejecucion en la PC (en naranja, la cantidad de procesos mas rapida)")
+# =====================================================================
+# E2: EFICIENCIA = speedup / p, cluster. Eficiencia 1 = ideal.
+# Por encima de 1: cada proceso rinde mas que el serial (efecto cache).
+# Muy por debajo: se estan usando procesos que casi no aportan.
+# Los p van a distancias iguales (posiciones_p). N grandes: lineas punteadas (p desde 8).
+# =====================================================================
+plt.figure(figsize=(9, 5))
+numero_linea = 0
+for N in N_CLUSTER:
+    e = []
+    for p in P_CLUSTER:
+        e.append(speedup("CLUSTER", N, p, "t_factorizar") / p)
+    plt.plot(posiciones_p, e, marcadores[numero_linea] + "-", label="N=" + str(N))
+    numero_linea = numero_linea + 1
+for N in N_GRANDES:
+    e = []
+    posiciones_grandes = []
+    for p in P_GRANDES:
+        e.append(speedup("CLUSTER", N, p, "t_factorizar") / p)
+        posiciones_grandes.append(P_CLUSTER.index(p))   # en que lugar del eje va ese p
+    plt.plot(posiciones_grandes, e, "s--", label="N=" + str(N))
+plt.plot(posiciones_p, np.ones(len(P_CLUSTER)), "k--", label="Ideal (eficiencia = 1)")
+plt.xticks(posiciones_p, etiquetas_p)
+plt.xlabel("p (cantidad de procesos)")
+plt.ylabel("Eficiencia = speedup / p")
+plt.title("E2: eficiencia vs p, cluster")
+plt.grid()
+plt.legend(loc="upper left", bbox_to_anchor=(1.02, 1))   # leyenda afuera, a la derecha
 plt.tight_layout()
-guardar("06_E5_tiempo_por_p_PC.png")
+guardar("06_E2_eficiencia_vs_p_cluster.png")
+
+
+# =====================================================================
+# G6: PRECISION. Residuo absoluto ||Ax-b|| y relativo ||Ax-b||/||b|| vs N
+# El residuo es el mismo para todos los p y repartos (y en las 2 maquinas),
+# asi que alcanza con tomar una sola corrida de cada N.
+# (Sin la recta de referencia N*epsilon: la comparacion con N*epsilon se explica de palabra.)
+# =====================================================================
+residuo_abs = []
+residuo_rel = []
+for N in N_TODOS:
+    for fila in datos:                     # busco la primera fila del cluster con ese N
+        if fila["maquina"] == "CLUSTER" and int(fila["N"]) == N:
+            residuo_abs.append(float(fila["residuo_abs"]))
+            residuo_rel.append(float(fila["residuo_rel"]))
+            break                          # ya encontre una: corto la busqueda
+
+plt.figure()
+plt.loglog(N_TODOS, residuo_abs, "o-", label="Residuo absoluto ||Ax-b||")
+plt.loglog(N_TODOS, residuo_rel, "s-", label="Residuo relativo ||Ax-b|| / ||b||")
+plt.xlabel("N (tamano de la matriz)")
+plt.ylabel("Residuo")
+# En escala log, matplotlib pone marcas en 10^3 = 1000 y 10^4 = 10000.
+# Con estas dos lineas ponemos las marcas justo en los N medidos, escritos normal.
+plt.xticks(N_TODOS, etiquetas_N, rotation=45)
+plt.minorticks_off()                     # saca las rayitas chicas entre marcas
+plt.title("G6: precision vs N")
+plt.grid()
+plt.legend()
+plt.tight_layout()                       # para que no se corte el nombre del eje x
+guardar("07_G6_precision_vs_N.png")
 
 
 # =====================================================================
@@ -452,38 +509,40 @@ plt.ylabel("Diferencia ciclico vs bloques [%]")
 plt.title("E4: ciclico vs bloques, cluster")
 plt.grid()
 plt.legend()
-guardar("07_E4_ciclico_vs_bloques.png")
+guardar("08_E4_ciclico_vs_bloques.png")
 
 
 # =====================================================================
-# G6: PRECISION. Residuo absoluto ||Ax-b|| y relativo ||Ax-b||/||b|| vs N
-# El residuo es el mismo para todos los p y repartos (y en las 2 maquinas),
-# asi que alcanza con tomar una sola corrida de cada N.
-# (Sin la recta de referencia N*epsilon: la comparacion con N*epsilon se explica de palabra.)
+# E5 (PC): igual que el E5 del cluster, pero en la notebook: 4 paneles (2 filas x 2 columnas)
 # =====================================================================
-residuo_abs = []
-residuo_rel = []
-for N in N_TODOS:
-    for fila in datos:                     # busco la primera fila del cluster con ese N
-        if fila["maquina"] == "CLUSTER" and int(fila["N"]) == N:
-            residuo_abs.append(float(fila["residuo_abs"]))
-            residuo_rel.append(float(fila["residuo_rel"]))
-            break                          # ya encontre una: corto la busqueda
+plt.figure(figsize=(12, 8))
+numero_panel = 1
+for N in N_PC:
+    plt.subplot(2, 2, numero_panel)
+    panel_barras("PC", N, P_PC)
+    numero_panel = numero_panel + 1
+plt.suptitle("E5: tiempo de ejecucion en la PC (en naranja, la cantidad de procesos mas rapida)")
+plt.tight_layout()
+guardar("09_E5_tiempo_por_p_PC.png")
 
+
+# =====================================================================
+# G3a: SPEEDUP vs p en la PC, una linea por N, y la linea ideal (speedup = p)
+# =====================================================================
 plt.figure()
-plt.loglog(N_TODOS, residuo_abs, "o-", label="Residuo absoluto ||Ax-b||")
-plt.loglog(N_TODOS, residuo_rel, "s-", label="Residuo relativo ||Ax-b|| / ||b||")
-plt.xlabel("N (tamano de la matriz)")
-plt.ylabel("Residuo")
-# En escala log, matplotlib pone marcas en 10^3 = 1000 y 10^4 = 10000.
-# Con estas dos lineas ponemos las marcas justo en los N medidos, escritos normal.
-plt.xticks(N_TODOS, etiquetas_N, rotation=45)
-plt.minorticks_off()                     # saca las rayitas chicas entre marcas
-plt.title("G6: precision vs N")
+for N in N_PC:
+    s = []
+    for p in P_PC:
+        s.append(speedup("PC", N, p, "t_factorizar"))
+    plt.plot(P_PC, s, "o-", label="N=" + str(N))
+plt.plot(P_PC, P_PC, "k--", label="Ideal (speedup = p)")
+plt.xticks(P_PC)                         # marcas justo en los p medidos (1, 2, 4, 6, 8, 10)
+plt.xlabel("p (cantidad de procesos)")
+plt.ylabel("Speedup de la factorizacion")
+plt.title("G3a: speedup vs p, PC")
 plt.grid()
 plt.legend()
-plt.tight_layout()                       # para que no se corte el nombre del eje x
-guardar("08_G6_precision_vs_N.png")
+guardar("10_G3a_speedup_vs_p_PC.png")
 
 
 # =====================================================================
