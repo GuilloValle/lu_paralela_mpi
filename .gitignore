@@ -1,0 +1,6 @@
+*.bin
+*_original.c
+lu_serial
+lu_mpi
+lu_mpi_prueba
+generar
